@@ -1,16 +1,23 @@
 #include "secrets.h"
 #include "esp_camera.h"
 #include <WiFi.h>
+#include "DHT.h"
 #include <ArduinoWebsockets.h>
 #define CAMERA_MODEL_AI_THINKER
 #include <stdio.h>
 #include "camera_pins.h"
+
+#define DHT_PIN 2
 
 const char* ssid = NETWORK_NAME; // Your wifi name like "myWifiNetwork"
 const char* password = PASSWORD; // Your password to the wifi network like "password123"
 const char* websocket_server_host = "192.168.0.150";
 const uint16_t websocket_server_port1 = 8885;
 
+float hmem = 0;
+float tmem = 0;
+
+DHT dht(DHT_PIN, DHT11);
 using namespace websockets;
 WebsocketsClient client;
 
@@ -35,9 +42,9 @@ void setup()
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
+  
   config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  
   config.frame_size = FRAMESIZE_SVGA;
   config.jpeg_quality = 40;
   config.fb_count = 2;
@@ -47,28 +54,22 @@ void setup()
   if (err != ESP_OK) { return; }
 
   sensor_t * s = esp_camera_sensor_get();
-  if (s->id.PID == OV3660_PID) 
-  {
-    s->set_vflip(s, 1);//flip it back
-    s->set_brightness(s, 1);//up the blightness just a bit
-    s->set_saturation(s, -2);//lower the saturation
-  }
+
   s->set_contrast(s, 0);   
   s->set_raw_gma(s, 1);
   
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) { delay(500); }
+  while(!client.connect(websocket_server_host, websocket_server_port1, "/")) { delay(500); }
 
-  delay(5000);
+  dht.begin();
 
   Serial.begin(115200);
 }
 
 void loop() 
 {
-  while(!client.connect(websocket_server_host, websocket_server_port1, "/")) { delay(500); }
-
   camera_fb_t *fb = esp_camera_fb_get();
   if(!fb)
   {
@@ -81,8 +82,20 @@ void loop()
   client.sendBinary((const char*) fb->buf, fb->len);
   esp_camera_fb_return(fb);
 
-  float h = 0;
-  float t = 1;
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+
+  if(isnan(h)) {
+    h = hmem;
+  } else {
+    hmem = h;
+  }
+
+  if(isnan(t)) {
+    t = tmem;
+  } else {
+    tmem = t;
+  }
 
   String output = "temp=" + String(t, 2) + ",hum=" + String(h, 2) + ",light=12";
   Serial.println(output);
