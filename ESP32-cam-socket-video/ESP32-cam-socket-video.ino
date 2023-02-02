@@ -8,6 +8,7 @@
 #include "camera_pins.h"
 
 #define DHT_PIN 2
+#define FLASH_PIN 4
 
 const char* ssid = NETWORK_NAME; // Your wifi name like "myWifiNetwork"
 const char* password = PASSWORD; // Your password to the wifi network like "password123"
@@ -16,10 +17,48 @@ const uint16_t websocket_server_port1 = 8885;
 
 float hmem = 0;
 float tmem = 0;
+int flashlight = 0;
 
 DHT dht(DHT_PIN, DHT11);
 using namespace websockets;
 WebsocketsClient client;
+
+void onEventsCallback(WebsocketsEvent event, String data) {
+    if(event == WebsocketsEvent::ConnectionOpened) {
+        Serial.println("Connection Opened");
+    } else if(event == WebsocketsEvent::ConnectionClosed) {
+        Serial.println("Connection Closed");
+        ESP.restart();
+    } else if(event == WebsocketsEvent::GotPing) {
+        Serial.println("Got a Ping!");
+    } else if(event == WebsocketsEvent::GotPong) {
+        Serial.println("Got a Pong!");
+    }
+}
+
+void onMessageCallback(WebsocketsMessage message) {
+    String data = message.data();
+    int index = data.indexOf("=");
+    if(index != -1) {
+        String key = data.substring(0, index);
+        String value = data.substring(index + 1);
+
+        if(key == "ON_BOARD_LED_1") {
+          if(value.toInt() == 1) {
+            flashlight = 1;
+            digitalWrite(FLASH_PIN, HIGH);
+          } else {
+            flashlight = 0;
+            digitalWrite(FLASH_PIN, LOW);
+          }
+        }
+        
+        Serial.print("Key: ");
+        Serial.println(key);
+        Serial.print("Value: ");
+        Serial.println(value);
+    }
+}
 
 void setup() 
 {
@@ -61,15 +100,19 @@ void setup()
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) { delay(500); }
-  while(!client.connect(websocket_server_host, websocket_server_port1, "/")) { delay(500); }
-
+  
   dht.begin();
+  pinMode(FLASH_PIN, OUTPUT);
+  client.onMessage(onMessageCallback);
+  client.onEvent(onEventsCallback);
 
   Serial.begin(115200);
+  while(!client.connect(websocket_server_host, websocket_server_port1, "/")) { delay(500); }
 }
 
 void loop() 
 {
+  client.poll();
   camera_fb_t *fb = esp_camera_fb_get();
   if(!fb)
   {
@@ -97,7 +140,7 @@ void loop()
     tmem = t;
   }
 
-  String output = "temp=" + String(t, 2) + ",hum=" + String(h, 2) + ",light=12";
+  String output = "temp=" + String(t, 2) + ",hum=" + String(h, 2) + ",light=12;state:ON_BOARD_LED_1=" + String(flashlight);
   Serial.println(output);
 
   client.send(output);
